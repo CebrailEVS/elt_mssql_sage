@@ -4,6 +4,7 @@ project_id: ede9e065-420d-4de0-a255-7d6677bf8c4c
 
 plugins:
   extractors:
+    # Extractor principal pour les tables normales
     - name: tap-mssql
       variant: buzzcutnorman
       pip_url: git+https://github.com/BuzzCutNorman/tap-mssql.git
@@ -15,10 +16,21 @@ plugins:
         database: ${TAP_MSSQL_DATABASE}
         schema: dbo
       select:
+        # COMPTABILITE
         - dbo-F_ECRITUREC.*
         - dbo-F_ECRITUREA.*
+
+    # Extractor pour les tables avec colonnes problématiques
+    - name: tap-mssql-commerce
+      inherit_from: tap-mssql
+      select:
+        # NUNSHEN COMMERCE  
+        - dbo-F_COMPTET.*
+        - dbo-F_COLLABORATEUR.*
+        - dbo-F_DOCLIGNE.*
    
   loaders:
+    # Loader principal (denormalized)
     - name: target-bigquery
       variant: z3z1ma
       pip_url: git+https://github.com/z3z1ma/target-bigquery.git
@@ -34,6 +46,14 @@ plugins:
           snake_case: true
           replace_period_with_underscore: true
           add_underscore_when_invalid: true
+          lower: true
+
+    # Loader spécial pour tables problématiques (JSON format)
+    - name: target-bigquery-json
+      inherit_from: target-bigquery
+      config:
+        denormalized: false  # Keep as JSON to avoid column name validation
+        dataset: ${TARGET_BIGQUERY_DATASET_RAW}
 
 environments:
   - name: dev
@@ -43,11 +63,17 @@ environments:
           - name: target-bigquery
             config:
               dataset: ${TARGET_BIGQUERY_DATASET_RAW_DEV}
+          - name: target-bigquery-json
+            config:
+              dataset: ${TARGET_BIGQUERY_DATASET_RAW_DEV}
 
   - name: prod
     config:
       plugins:
         loaders:
           - name: target-bigquery
+            config:
+              dataset: ${TARGET_BIGQUERY_DATASET_RAW_PROD}
+          - name: target-bigquery-json
             config:
               dataset: ${TARGET_BIGQUERY_DATASET_RAW_PROD}
