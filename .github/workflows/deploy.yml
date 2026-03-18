@@ -3,6 +3,11 @@ name: Build & Deploy
 on:
   push:
     branches: [master]
+    paths:
+      - Dockerfile
+      - meltano.yml
+      - plugins/**
+      - requirements.txt
 
 env:
   IMAGE: europe-west1-docker.pkg.dev/evs-datastack-prod/data-pipelines/elt-mssql-sage
