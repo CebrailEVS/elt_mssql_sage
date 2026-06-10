@@ -90,13 +90,24 @@ plugins:
         location: ${TARGET_BIGQUERY_LOCATION}
         credentials_path: ${TARGET_BIGQUERY_CREDENTIALS_PATH}
         dataset: ${TARGET_BIGQUERY_DATASET_RAW}
-        # overwrite (WRITE_TRUNCATE) uniquement pour les dimensions full-refresh.
-        # Match par fnmatch sur le NOM DU STREAM. Les tables fact (non listees)
-        # sont en append -> le dedoublonnage se fait dans dbt (max cbModification
-        # par cbMarq).
+        # Strategie d'ecriture par stream (fnmatch sur le NOM DU STREAM) :
+        #  - dimensions full-refresh -> overwrite (WRITE_TRUNCATE, transactionnel).
+        #  - tables fact incrementales -> upsert : MERGE sur les key-properties
+        #    (cbMarq) => unicite de la PK garantie dans le raw, fini les doublons
+        #    dus au re-append de la ligne de frontiere a chaque run incremental.
+        # overwrite et upsert sont mutuellement exclusifs (upsert prioritaire) :
+        # les globs sont volontairement disjoints.
         overwrite:
           - "*F_COMPTET*"
           - "*F_COLLABORATEUR*"
+        upsert:
+          - "*F_ECRITUREC*"
+          - "*F_ECRITUREA*"
+          - "*F_DOCLIGNE*"
+        # Dedup intra-batch avant le MERGE : la replication-key etant bornee en >=,
+        # un meme cbMarq peut etre reextrait dans un meme batch. Sans ceci le MERGE
+        # BigQuery echoue ("must match at most one source row for each target row").
+        dedupe_before_upsert: true
         column_name_transforms:
           snake_case: true
           replace_period_with_underscore: true
