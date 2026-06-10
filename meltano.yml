@@ -3,7 +3,8 @@ project_id: ede9e065-420d-4de0-a255-7d6677bf8c4c
 
 plugins:
   extractors:
-    # Extractor principal pour les tables normales
+    # Extractor unique pour toutes les tables Sage (plus de split tap-mssql-commerce).
+    # Les tables volumineuses sont en INCREMENTAL, les petites dimensions en FULL_TABLE.
     - name: tap-mssql
       variant: buzzcutnorman
       pip_url: git+https://github.com/BuzzCutNorman/tap-mssql.git
@@ -14,22 +15,71 @@ plugins:
         password: ${TAP_MSSQL_PASSWORD}
         database: ${TAP_MSSQL_DATABASE}
         schema: dbo
+        # Renommage des colonnes contenant des espaces (rejetées par BigQuery).
+        # snake_case du target ne gère QUE le camelCase, pas les espaces -> on
+        # renomme ici, entre extract et load, plutot que de stocker en JSON.
+        # Les proprietes non listees passent telles quelles.
+        stream_maps:
+          dbo-F_COMPTET:
+            annee_origine: record['ANNEE ORIGINE']
+            "ANNEE ORIGINE": __NULL__
+            archive_compta: record['ARCHIVE COMPTA']
+            "ARCHIVE COMPTA": __NULL__
+            categorisation_niv_1: record['CATEGORISATION NIV 1']
+            "CATEGORISATION NIV 1": __NULL__
+            categorisation_niv_2: record['CATEGORISATION NIV 2']
+            "CATEGORISATION NIV 2": __NULL__
+            categorisation_niv_3: record['CATEGORISATION NIV 3']
+            "CATEGORISATION NIV 3": __NULL__
+            client_perdu: record['CLIENT PERDU']
+            "CLIENT PERDU": __NULL__
+            code_secteur: record['CODE SECTEUR']
+            "CODE SECTEUR": __NULL__
+            commercial_origine: record['COMMERCIAL ORIGINE']
+            "COMMERCIAL ORIGINE": __NULL__
+            ligne_de_service: record['LIGNE DE SERVICE']
+            "LIGNE DE SERVICE": __NULL__
+          dbo-F_DOCLIGNE:
+            ancien_code_article: record['ANCIEN CODE ARTICLE']
+            "ANCIEN CODE ARTICLE": __NULL__
+            old_dl_no: record['OLD DL_NO']
+            "OLD DL_NO": __NULL__
       select:
-        # COMPTABILITE
+        # COMPTABILITE (fact, volumineux)
         - dbo-F_ECRITUREC.*
         - dbo-F_ECRITUREA.*
-
-    # Extractor pour les tables avec colonnes problématiques
-    - name: tap-mssql-commerce
-      inherit_from: tap-mssql
-      select:
-        # NUNSHEN COMMERCE  
+        # COMMERCE / CRM
         - dbo-F_COMPTET.*
         - dbo-F_COLLABORATEUR.*
         - dbo-F_DOCLIGNE.*
-   
+      metadata:
+        # --- Tables fact volumineuses : extraction incrementale ---
+        # cbModification est mis a jour a chaque INSERT et UPDATE.
+        # cbMarq = cle primaire (sert au dedoublonnage dbt).
+        # Les hard-deletes ne sont PAS captures -> gere en aval si besoin.
+        dbo-F_ECRITUREC:
+          replication-method: INCREMENTAL
+          replication-key: cbModification
+          key-properties: [cbMarq]
+        dbo-F_ECRITUREA:
+          replication-method: INCREMENTAL
+          replication-key: cbModification
+          key-properties: [cbMarq]
+        dbo-F_DOCLIGNE:
+          replication-method: INCREMENTAL
+          replication-key: cbModification
+          key-properties: [cbMarq]
+        # --- Petites dimensions : full refresh (simple, capture les deletes) ---
+        dbo-F_COMPTET:
+          replication-method: FULL_TABLE
+          key-properties: [cbMarq]
+        dbo-F_COLLABORATEUR:
+          replication-method: FULL_TABLE
+          key-properties: [cbMarq]
+
   loaders:
-    # Loader principal (denormalized)
+    # Loader unique (denormalized). Plus besoin du loader JSON : les noms de
+    # colonnes problematiques sont corriges via stream_maps en amont.
     - name: target-bigquery
       variant: z3z1ma
       pip_url: git+https://github.com/z3z1ma/target-bigquery.git
@@ -40,19 +90,18 @@ plugins:
         location: ${TARGET_BIGQUERY_LOCATION}
         credentials_path: ${TARGET_BIGQUERY_CREDENTIALS_PATH}
         dataset: ${TARGET_BIGQUERY_DATASET_RAW}
-        overwrite: true
+        # overwrite (WRITE_TRUNCATE) uniquement pour les dimensions full-refresh.
+        # Match par fnmatch sur le NOM DU STREAM. Les tables fact (non listees)
+        # sont en append -> le dedoublonnage se fait dans dbt (max cbModification
+        # par cbMarq).
+        overwrite:
+          - "*F_COMPTET*"
+          - "*F_COLLABORATEUR*"
         column_name_transforms:
           snake_case: true
           replace_period_with_underscore: true
           add_underscore_when_invalid: true
           lower: true
-
-    # Loader spécial pour tables problématiques (JSON format)
-    - name: target-bigquery-json
-      inherit_from: target-bigquery
-      config:
-        denormalized: false  # Keep as JSON to avoid column name validation
-        dataset: ${TARGET_BIGQUERY_DATASET_RAW}
 
 environments:
   - name: dev
@@ -62,17 +111,11 @@ environments:
           - name: target-bigquery
             config:
               dataset: ${TARGET_BIGQUERY_DATASET_RAW_DEV}
-          - name: target-bigquery-json
-            config:
-              dataset: ${TARGET_BIGQUERY_DATASET_RAW_DEV}
 
   - name: prod
     config:
       plugins:
         loaders:
           - name: target-bigquery
-            config:
-              dataset: ${TARGET_BIGQUERY_DATASET_RAW_PROD}
-          - name: target-bigquery-json
             config:
               dataset: ${TARGET_BIGQUERY_DATASET_RAW_PROD}
