@@ -20,7 +20,13 @@ plugins:
         # renomme ici, entre extract et load, plutot que de stocker en JSON.
         # Les proprietes non listees passent telles quelles.
         stream_maps:
+          # cbMarq -> cb_marq : aligne le nom de la PK sur la colonne BigQuery
+          # (snake_case applique par le loader). Necessaire car l'upsert genere
+          # un MERGE ... ON cb_marq, et le tap valide key-properties contre SON
+          # schema -> la PK doit donc s'appeler cb_marq des l'extraction.
           dbo-F_COMPTET:
+            cb_marq: int(record['cbMarq'])
+            cbMarq: __NULL__
             annee_origine: record['ANNEE ORIGINE']
             "ANNEE ORIGINE": __NULL__
             archive_compta: record['ARCHIVE COMPTA']
@@ -40,10 +46,21 @@ plugins:
             ligne_de_service: record['LIGNE DE SERVICE']
             "LIGNE DE SERVICE": __NULL__
           dbo-F_DOCLIGNE:
+            cb_marq: int(record['cbMarq'])
+            cbMarq: __NULL__
             ancien_code_article: record['ANCIEN CODE ARTICLE']
             "ANCIEN CODE ARTICLE": __NULL__
             old_dl_no: record['OLD DL_NO']
             "OLD DL_NO": __NULL__
+          dbo-F_ECRITUREC:
+            cb_marq: int(record['cbMarq'])
+            cbMarq: __NULL__
+          dbo-F_ECRITUREA:
+            cb_marq: int(record['cbMarq'])
+            cbMarq: __NULL__
+          dbo-F_COLLABORATEUR:
+            cb_marq: int(record['cbMarq'])
+            cbMarq: __NULL__
       select:
         # COMPTABILITE (fact, volumineux)
         - dbo-F_ECRITUREC.*
@@ -60,22 +77,22 @@ plugins:
         dbo-F_ECRITUREC:
           replication-method: INCREMENTAL
           replication-key: cbModification
-          key-properties: [cbMarq]
+          key-properties: [cb_marq]
         dbo-F_ECRITUREA:
           replication-method: INCREMENTAL
           replication-key: cbModification
-          key-properties: [cbMarq]
+          key-properties: [cb_marq]
         dbo-F_DOCLIGNE:
           replication-method: INCREMENTAL
           replication-key: cbModification
-          key-properties: [cbMarq]
+          key-properties: [cb_marq]
         # --- Petites dimensions : full refresh (simple, capture les deletes) ---
         dbo-F_COMPTET:
           replication-method: FULL_TABLE
-          key-properties: [cbMarq]
+          key-properties: [cb_marq]
         dbo-F_COLLABORATEUR:
           replication-method: FULL_TABLE
-          key-properties: [cbMarq]
+          key-properties: [cb_marq]
 
   loaders:
     # Loader unique (denormalized). Plus besoin du loader JSON : les noms de
